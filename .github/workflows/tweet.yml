@@ -2,8 +2,8 @@ name: Daily Tech Tweet
 
 on:
   schedule:
-    # 8:45 PM IST → 15:15 UTC
-    - cron: "15 15 * * 1-5"
+    # 10:00 AM IST → 04:30 UTC (daily)
+    - cron: "30 4 * * *"
   workflow_dispatch:
 
 jobs:
