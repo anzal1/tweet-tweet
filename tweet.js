@@ -37,6 +37,36 @@ const FEEDS = [
     url: "https://export.arxiv.org/api/query?search_query=cat:cs.SE&sortBy=lastUpdatedDate&sortOrder=descending&max_results=6",
     category: "evergreen",
   },
+  {
+    name: "BBC Sport Football",
+    url: "https://feeds.bbci.co.uk/sport/football/rss.xml",
+    category: "trending",
+  },
+  {
+    name: "The Guardian Football",
+    url: "https://www.theguardian.com/football/rss",
+    category: "trending",
+  },
+  {
+    name: "GamesIndustry.biz",
+    url: "https://www.gamesindustry.biz/feed",
+    category: "trending",
+  },
+  {
+    name: "IGN",
+    url: "https://feeds.feedburner.com/ign/all",
+    category: "trending",
+  },
+  {
+    name: "Polygon",
+    url: "https://www.polygon.com/rss/index.xml",
+    category: "trending",
+  },
+  {
+    name: "The Verge",
+    url: "https://www.theverge.com/rss/index.xml",
+    category: "trending",
+  },
 ];
 
 const DEFAULT_HEADERS = {
@@ -54,9 +84,175 @@ const MAX_IMAGE_BYTES = 5_000_000;
 const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif"]);
 const POSTED_PATH = process.env.POSTED_PATH || "posted.json";
 const POSTED_LOOKBACK_DAYS = 14;
+const TWEET_SIMILARITY_THRESHOLD = 0.6;
 const CATEGORY_WEIGHTS = { evergreen: 0.7, trending: 0.3 };
+const TOPIC_DOMAINS = new Set([
+  "aws.amazon.com",
+  "blog.cloudflare.com",
+  "cloudflare.com",
+  "docs.github.com",
+  "github.com",
+  "kubernetes.io",
+  "netflixtechblog.com",
+  "openai.com",
+  "postgresql.org",
+  "react.dev",
+  "rust-lang.org",
+  "stripe.com",
+  "www.postgresql.org",
+  "arxiv.org",
+  "bbc.co.uk",
+  "bbci.co.uk",
+  "espn.com",
+  "fifa.com",
+  "premierleague.com",
+  "theguardian.com",
+  "gamesindustry.biz",
+  "ign.com",
+  "polygon.com",
+  "theverge.com",
+]);
+const TOPIC_KEYWORDS = [
+  "api",
+  "sdk",
+  "cli",
+  "database",
+  "db",
+  "postgres",
+  "mysql",
+  "redis",
+  "cache",
+  "latency",
+  "throughput",
+  "scalability",
+  "scale",
+  "distributed",
+  "consensus",
+  "raft",
+  "paxos",
+  "kubernetes",
+  "k8s",
+  "docker",
+  "container",
+  "linux",
+  "kernel",
+  "compiler",
+  "runtime",
+  "vm",
+  "garbage collector",
+  "gc",
+  "observability",
+  "logging",
+  "metrics",
+  "tracing",
+  "sre",
+  "devops",
+  "infrastructure",
+  "infra",
+  "cloud",
+  "aws",
+  "gcp",
+  "azure",
+  "serverless",
+  "microservice",
+  "monolith",
+  "frontend",
+  "backend",
+  "full stack",
+  "node",
+  "react",
+  "rust",
+  "go",
+  "python",
+  "typescript",
+  "javascript",
+  "security",
+  "encryption",
+  "vulnerability",
+  "cve",
+  "auth",
+  "oauth",
+  "jwt",
+  "performance",
+  "benchmark",
+  "ci",
+  "cd",
+  "ci/cd",
+  "deployment",
+  "release",
+  "incident",
+  "postmortem",
+  "outage",
+  "availability",
+  "reliability",
+  "testing",
+  "qa",
+  "feature flag",
+  "rollout",
+  "ml",
+  "ai",
+  "llm",
+  "model",
+  "training",
+  "data",
+  "pipeline",
+  "etl",
+  "analytics",
+  "streaming",
+  "kafka",
+  "queue",
+  "messaging",
+  "http",
+  "tcp",
+  "dns",
+  "cdn",
+  "edge",
+  "load balancer",
+  "proxy",
+  "rpc",
+  "grpc",
+  "graphql",
+  "mobile",
+  "ios",
+  "android",
+  "git",
+  "open source",
+  "oss",
+  "license",
+  "football",
+  "soccer",
+  "premier league",
+  "champions league",
+  "uefa",
+  "fifa",
+  "world cup",
+  "transfer",
+  "matchday",
+  "fixture",
+  "manager",
+  "injury",
+  "games",
+  "gaming",
+  "gameplay",
+  "esports",
+  "indie",
+  "steam",
+  "xbox",
+  "playstation",
+  "nintendo",
+  "switch",
+  "ps5",
+  "unity",
+  "unreal engine",
+  "launch",
+  "patch",
+  "update",
+  "roadmap",
+  "announcement",
+];
 
 const DRY_RUN = process.env.DRY_RUN === "true";
+const DRY_RUN_SAVE = process.env.DRY_RUN_SAVE !== "false";
 
 /* ================= SAFETY ================= */
 
@@ -172,6 +368,47 @@ function normalizeTweet(value) {
     .trim();
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hostnameFromUrl(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch (err) {
+    return null;
+  }
+}
+
+function matchesTopicKeywords(text) {
+  const value = cleanText(text).toLowerCase();
+  if (!value) return false;
+
+  for (const keyword of TOPIC_KEYWORDS) {
+    if (keyword.includes(" ")) {
+      if (value.includes(keyword)) return true;
+      continue;
+    }
+
+    const regex = new RegExp(`\\b${escapeRegExp(keyword)}\\b`, "i");
+    if (regex.test(value)) return true;
+  }
+
+  return false;
+}
+
+function isOnTopic(signal) {
+  const domain = signal.url ? hostnameFromUrl(signal.url) : null;
+  if (domain) {
+    for (const allowed of TOPIC_DOMAINS) {
+      if (domain === allowed || domain.endsWith(`.${allowed}`)) return true;
+    }
+  }
+
+  const text = [signal.title, signal.summary].filter(Boolean).join(" ");
+  return matchesTopicKeywords(text);
+}
+
 function extractHtmlAttr(tag, attr) {
   const regex = new RegExp(`\\b${attr}\\s*=\\s*["']([^"']+)["']`, "i");
   const match = tag.match(regex);
@@ -233,6 +470,9 @@ function parseRssItems(xml, limit = 6) {
     const link = extractTag(itemXml, "link") || extractTag(itemXml, "guid");
     const pubDate =
       extractTag(itemXml, "pubDate") || extractTag(itemXml, "dc:date");
+    const summary =
+      extractTag(itemXml, "description") ||
+      extractTag(itemXml, "content:encoded");
     const imageUrl =
       extractAttr(itemXml, "media:content", "url") ||
       extractAttr(itemXml, "media:thumbnail", "url") ||
@@ -244,6 +484,7 @@ function parseRssItems(xml, limit = 6) {
       title,
       link,
       publishedAt: pubDate,
+      summary,
       imageUrl,
     });
   }
@@ -278,6 +519,8 @@ function parseAtomEntries(xml, limit = 6) {
       extractAttr(entryXml, "media:thumbnail", "url") ||
       (enclosureMatch ? cleanText(enclosureMatch[1]) : null);
 
+    const summary =
+      extractTag(entryXml, "summary") || extractTag(entryXml, "content");
     const publishedAt =
       extractTag(entryXml, "published") || extractTag(entryXml, "updated");
 
@@ -287,6 +530,7 @@ function parseAtomEntries(xml, limit = 6) {
       title,
       link,
       publishedAt,
+      summary,
       imageUrl,
     });
   }
@@ -331,6 +575,24 @@ function similarityScore(a, b) {
   }
   const union = new Set([...setA, ...setB]).size;
   return union ? intersection / union : 0;
+}
+
+function buildTweetFingerprint(text) {
+  return buildFingerprint(cleanText(text)).slice(0, 80);
+}
+
+function isTweetTooSimilar(tweet, posted) {
+  const fingerprint = buildTweetFingerprint(tweet);
+  if (!fingerprint) return false;
+
+  return posted.some((entry) => {
+    const compare =
+      entry.tweetFingerprint ||
+      (entry.tweet ? buildTweetFingerprint(entry.tweet) : "");
+    if (!compare) return false;
+    return similarityScore(compare, fingerprint) >=
+      TWEET_SIMILARITY_THRESHOLD;
+  });
 }
 
 function getRecentPosted(posted, days = POSTED_LOOKBACK_DAYS) {
@@ -392,7 +654,11 @@ function pickWeighted(weights) {
 function selectSignal(signals, posted) {
   const recent = getRecentPosted(posted);
   const candidates = signals.filter(
-    (signal) => signal.title && !isStale(signal) && !isDuplicate(signal, recent)
+    (signal) =>
+      signal.title &&
+      isOnTopic(signal) &&
+      !isStale(signal) &&
+      !isDuplicate(signal, recent)
   );
 
   if (!candidates.length) return null;
@@ -418,6 +684,7 @@ async function getHnSignals(listUrl, source, category, limit = 8) {
       signals.push({
         id: `hn:${id}`,
         title: cleanText(item.title),
+        summary: item.text ? cleanText(item.text) : "",
         url: item.url || `https://news.ycombinator.com/item?id=${id}`,
         source,
         category,
@@ -439,21 +706,37 @@ async function getGithubTrendingSignals(limit = 8) {
   try {
     const html = await fetchText(GH_TRENDING);
     const signals = [];
-    const repoRegex =
-      /<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    const articleRegex = /<article[\s\S]*?<\/article>/gi;
     let match;
 
-    while ((match = repoRegex.exec(html)) !== null && signals.length < limit) {
-      const href = match[1];
-      const text = cleanText(match[2]);
+    while ((match = articleRegex.exec(html)) !== null && signals.length < limit) {
+      const block = match[0];
+      const repoMatch = block.match(
+        /<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i
+      );
+      if (!repoMatch) continue;
+
+      const href = repoMatch[1];
+      const text = cleanText(repoMatch[2]);
       const repoPath = href.split("?")[0].replace(/^\//, "");
 
       if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repoPath)) continue;
+
+      const descriptionMatch = block.match(
+        /<p[^>]*class="[^"]*color-fg-muted[^"]*"[^>]*>([\s\S]*?)<\/p>/i
+      );
+      const summary = descriptionMatch ? cleanText(descriptionMatch[1]) : "";
+      const languageMatch = block.match(
+        /<span[^>]*itemprop="programmingLanguage"[^>]*>([^<]+)<\/span>/i
+      );
+      const language = languageMatch ? cleanText(languageMatch[1]) : "";
       const imageUrl = `https://opengraph.githubassets.com/1/${repoPath}`;
 
       signals.push({
         id: `gh:${repoPath}`,
         title: text || repoPath,
+        summary,
+        language,
         url: `https://github.com/${repoPath}`,
         imageUrl,
         source: "GitHub Trending",
@@ -476,6 +759,7 @@ async function getFeedSignals(feed, limit = 6) {
     return items.map((item) => ({
       id: `feed:${feed.name}:${buildFingerprint(item.title)}`,
       title: cleanText(item.title),
+      summary: cleanText(item.summary || ""),
       url: item.link,
       imageUrl: item.imageUrl ? resolveUrl(item.link, item.imageUrl) : null,
       source: feed.name,
@@ -558,13 +842,22 @@ async function uploadImageFromUrl(imageUrl) {
 
 function buildPrompt(signal, guidance) {
   const extra = guidance ? `\n${guidance}` : "";
+  const summary = signal.summary ? `Summary: ${signal.summary}\n` : "";
+  const language = signal.language ? `Stack/Language: ${signal.language}\n` : "";
+  const guard =
+    "\nDo not mention the source name. Do not repeat the title verbatim; paraphrase it.";
+  const repoGuard =
+    signal.source === "GitHub Trending"
+      ? " Avoid listing the repo owner/name."
+      : "";
 
   return `
 Write one original tweet.
 
-Voice: senior software engineer, builder mindset.
-Tone: calm, reflective, precise.
-Style: minimal, confident, not hype.
+Voice: engineering tech lead, builder mindset.
+Tone: calm, reflective, precise, engaging.
+Style: minimal, confident, pragmatic.
+Focus: systems thinking, delivery tradeoffs, and clear takeaways.
 
 Constraints:
 - Under ${MAX_TEXT_LENGTH} characters
@@ -573,12 +866,12 @@ Constraints:
 - No questions
 - No links in the text
 
-Structure: observation -> tradeoff -> takeaway. Keep it to one sentence if possible.${extra}
+Structure: observation -> tradeoff -> takeaway. Keep it to one sentence if possible.${extra}${guard}${repoGuard}
 A source link will be appended after the text.
 
 Signal:
 Title: ${signal.title}
-Source: ${signal.source}
+${summary}${language}Source: ${signal.source}
 Category: ${signal.category}
 `.trim();
 }
@@ -592,7 +885,7 @@ async function generateTweet(signal, guidance) {
   return normalizeTweet(res);
 }
 
-function validateTweetText(tweet) {
+function validateTweetText(tweet, signal) {
   if (!tweet) return "Output is empty.";
   if (tweet.length > MAX_TEXT_LENGTH) {
     return `Keep it under ${MAX_TEXT_LENGTH} characters.`;
@@ -601,17 +894,33 @@ function validateTweetText(tweet) {
   if (/\?/.test(tweet)) return "Remove questions.";
   if (/https?:\/\//i.test(tweet)) return "Remove links from the text.";
   if (/[\u{1F300}-\u{1FAFF}]/u.test(tweet)) return "Remove emojis.";
+  if (signal?.source) {
+    const sourceRegex = new RegExp(`\\b${escapeRegExp(signal.source)}\\b`, "i");
+    if (sourceRegex.test(tweet)) {
+      return "Avoid mentioning the source name.";
+    }
+  }
+  if (signal?.source === "GitHub Trending" && signal?.title) {
+    const title = signal.title.toLowerCase();
+    if (title && tweet.toLowerCase().includes(title)) {
+      return "Avoid listing the repo name verbatim.";
+    }
+  }
   return null;
 }
 
-async function generateTweetWithRetries(signal, attempts = 3) {
+async function generateTweetWithRetries(signal, posted, attempts = 3) {
   let guidance = "";
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const tweet = await generateTweet(signal, guidance);
-    const error = validateTweetText(tweet);
+    const error = validateTweetText(tweet, signal);
 
-    if (!error) return tweet;
+    if (!error && !isTweetTooSimilar(tweet, posted)) return tweet;
+    if (!error) {
+      guidance = "Make it meaningfully different from recent tweets.";
+      continue;
+    }
 
     guidance = `Fix: ${error}`;
   }
@@ -646,6 +955,7 @@ function savePosted(entry) {
     }
 
     const posted = loadPosted();
+    const recentPosted = getRecentPosted(posted);
     const signal = selectSignal(signals, posted);
 
     if (!signal) {
@@ -653,7 +963,7 @@ function savePosted(entry) {
       return;
     }
 
-    const tweetText = await generateTweetWithRetries(signal);
+    const tweetText = await generateTweetWithRetries(signal, recentPosted);
     const finalTweet = appendLink(tweetText, signal.url);
     const estimatedLength = estimateTweetLength(tweetText, signal.url);
 
@@ -661,8 +971,9 @@ function savePosted(entry) {
       throw new Error("Generated tweet is too long after the link.");
     }
 
-    const imageUrl = await resolveSignalImage(signal);
-    const mediaId = await uploadImageFromUrl(imageUrl);
+    const canAttachImage = INCLUDE_IMAGES && !(INCLUDE_LINKS && signal.url);
+    const imageUrl = canAttachImage ? await resolveSignalImage(signal) : null;
+    const mediaId = canAttachImage ? await uploadImageFromUrl(imageUrl) : null;
 
     if (DRY_RUN) {
       console.log("DRY RUN - Tweet NOT posted:");
@@ -670,8 +981,26 @@ function savePosted(entry) {
       console.log(`Source: ${signal.source}`);
       console.log(`Title: ${signal.title}`);
       if (signal.url) console.log(`Link: ${signal.url}`);
-      if (imageUrl) console.log(`Image: ${imageUrl}`);
+      if (canAttachImage && imageUrl) console.log(`Image: ${imageUrl}`);
+      if (!canAttachImage && INCLUDE_LINKS && signal.url) {
+        console.log("Image: skipped (link card will use OG image)");
+      }
       console.log(`Length: ${estimatedLength}/${MAX_TWEET_LENGTH}`);
+      if (DRY_RUN_SAVE) {
+        savePosted({
+          date: new Date().toISOString(),
+          sourceId: signal.id,
+          source: signal.source,
+          category: signal.category,
+          title: signal.title,
+          url: signal.url,
+          fingerprint: buildFingerprint(signal.title),
+          imageUrl,
+          tweet: finalTweet,
+          tweetFingerprint: buildTweetFingerprint(finalTweet),
+          dryRun: true,
+        });
+      }
       return;
     }
 
@@ -692,6 +1021,7 @@ function savePosted(entry) {
       fingerprint: buildFingerprint(signal.title),
       imageUrl,
       tweet: finalTweet,
+      tweetFingerprint: buildTweetFingerprint(finalTweet),
     });
 
     console.log("Tweet posted successfully:");
