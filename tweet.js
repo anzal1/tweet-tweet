@@ -1,7 +1,6 @@
 import "dotenv/config";
 import fetch from "node-fetch";
 import fs from "fs";
-import path from "path";
 import { TwitterApi } from "twitter-api-v2";
 
 /* ================= CONFIG ================= */
@@ -18,7 +17,11 @@ const FEEDS = [
     url: "https://blog.cloudflare.com/rss/",
     category: "evergreen",
   },
-  { name: "Stripe Blog", url: "https://stripe.com/blog/rss", category: "evergreen" },
+  {
+    name: "Stripe Blog",
+    url: "https://stripe.com/blog/rss",
+    category: "evergreen",
+  },
   {
     name: "Netflix Tech Blog",
     url: "https://netflixtechblog.com/feed",
@@ -48,139 +51,10 @@ const MAX_TEXT_LENGTH = INCLUDE_LINKS
   ? MAX_TWEET_LENGTH - LINK_LENGTH - 1
   : MAX_TWEET_LENGTH;
 const MAX_IMAGE_BYTES = 5_000_000;
-const SUPPORTED_IMAGE_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-]);
+const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif"]);
 const POSTED_PATH = process.env.POSTED_PATH || "posted.json";
 const POSTED_LOOKBACK_DAYS = 14;
 const CATEGORY_WEIGHTS = { evergreen: 0.7, trending: 0.3 };
-const DRY_RUN_SAVE = process.env.DRY_RUN_SAVE !== "false";
-const TECH_DOMAINS = new Set([
-  "aws.amazon.com",
-  "blog.cloudflare.com",
-  "cloudflare.com",
-  "docs.github.com",
-  "github.com",
-  "kubernetes.io",
-  "netflixtechblog.com",
-  "openai.com",
-  "postgresql.org",
-  "react.dev",
-  "rust-lang.org",
-  "stripe.com",
-  "www.postgresql.org",
-  "arxiv.org",
-]);
-const TECH_KEYWORDS = [
-  "api",
-  "sdk",
-  "cli",
-  "database",
-  "db",
-  "postgres",
-  "mysql",
-  "redis",
-  "cache",
-  "latency",
-  "throughput",
-  "scalability",
-  "scale",
-  "distributed",
-  "consensus",
-  "raft",
-  "paxos",
-  "kubernetes",
-  "k8s",
-  "docker",
-  "container",
-  "linux",
-  "kernel",
-  "compiler",
-  "runtime",
-  "vm",
-  "garbage collector",
-  "gc",
-  "observability",
-  "logging",
-  "metrics",
-  "tracing",
-  "sre",
-  "devops",
-  "infrastructure",
-  "infra",
-  "cloud",
-  "aws",
-  "gcp",
-  "azure",
-  "serverless",
-  "microservice",
-  "monolith",
-  "frontend",
-  "backend",
-  "full stack",
-  "node",
-  "react",
-  "rust",
-  "go",
-  "python",
-  "typescript",
-  "javascript",
-  "security",
-  "encryption",
-  "vulnerability",
-  "cve",
-  "auth",
-  "oauth",
-  "jwt",
-  "performance",
-  "benchmark",
-  "ci",
-  "cd",
-  "ci/cd",
-  "deployment",
-  "release",
-  "incident",
-  "postmortem",
-  "outage",
-  "availability",
-  "reliability",
-  "testing",
-  "qa",
-  "feature flag",
-  "rollout",
-  "ml",
-  "ai",
-  "llm",
-  "model",
-  "training",
-  "data",
-  "pipeline",
-  "etl",
-  "analytics",
-  "streaming",
-  "kafka",
-  "queue",
-  "messaging",
-  "http",
-  "tcp",
-  "dns",
-  "cdn",
-  "edge",
-  "load balancer",
-  "proxy",
-  "rpc",
-  "grpc",
-  "graphql",
-  "mobile",
-  "ios",
-  "android",
-  "git",
-  "open source",
-  "oss",
-  "license",
-];
 
 const DRY_RUN = process.env.DRY_RUN === "true";
 
@@ -293,47 +167,9 @@ function cleanText(value) {
 }
 
 function normalizeTweet(value) {
-  return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function hostnameFromUrl(url) {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
-  } catch (err) {
-    return null;
-  }
-}
-
-function matchesTechKeywords(text) {
-  const value = cleanText(text).toLowerCase();
-  if (!value) return false;
-
-  for (const keyword of TECH_KEYWORDS) {
-    if (keyword.includes(" ")) {
-      if (value.includes(keyword)) return true;
-      continue;
-    }
-
-    const regex = new RegExp(`\\b${escapeRegExp(keyword)}\\b`, "i");
-    if (regex.test(value)) return true;
-  }
-
-  return false;
-}
-
-function isTechSignal(signal) {
-  const domain = signal.url ? hostnameFromUrl(signal.url) : null;
-  if (domain) {
-    for (const allowed of TECH_DOMAINS) {
-      if (domain === allowed || domain.endsWith(`.${allowed}`)) return true;
-    }
-  }
-
-  return matchesTechKeywords(signal.title);
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function extractHtmlAttr(tag, attr) {
@@ -466,7 +302,9 @@ function parseFeed(xml) {
 }
 
 function buildFingerprint(text) {
-  const words = cleanText(text).toLowerCase().replace(/[^a-z0-9 ]/g, " ");
+  const words = cleanText(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ");
   const parts = words.split(/\s+/).filter(Boolean);
   const unique = [];
   const seen = new Set();
@@ -554,11 +392,7 @@ function pickWeighted(weights) {
 function selectSignal(signals, posted) {
   const recent = getRecentPosted(posted);
   const candidates = signals.filter(
-    (signal) =>
-      signal.title &&
-      isTechSignal(signal) &&
-      !isStale(signal) &&
-      !isDuplicate(signal, recent)
+    (signal) => signal.title && !isStale(signal) && !isDuplicate(signal, recent)
   );
 
   if (!candidates.length) return null;
@@ -568,10 +402,8 @@ function selectSignal(signals, posted) {
     (signal) => signal.category === desiredCategory
   );
   const pool = byCategory.length ? byCategory : candidates;
-  const sorted = pool.sort((a, b) => scoreSignal(b) - scoreSignal(a));
-  const pickCount = Math.min(3, sorted.length);
-  const index = Math.floor(Math.random() * pickCount);
-  return sorted[index];
+
+  return pool.sort((a, b) => scoreSignal(b) - scoreSignal(a))[0];
 }
 
 async function getHnSignals(listUrl, source, category, limit = 8) {
@@ -589,7 +421,9 @@ async function getHnSignals(listUrl, source, category, limit = 8) {
         url: item.url || `https://news.ycombinator.com/item?id=${id}`,
         source,
         category,
-        publishedAt: item.time ? new Date(item.time * 1000).toISOString() : null,
+        publishedAt: item.time
+          ? new Date(item.time * 1000).toISOString()
+          : null,
       });
 
       if (signals.length >= limit) break;
@@ -724,17 +558,13 @@ async function uploadImageFromUrl(imageUrl) {
 
 function buildPrompt(signal, guidance) {
   const extra = guidance ? `\n${guidance}` : "";
-  const linkNote = INCLUDE_LINKS
-    ? "\nA source link will be appended after the text."
-    : "";
 
   return `
 Write one original tweet.
 
-Voice: engineering tech lead, builder mindset.
+Voice: senior software engineer, builder mindset.
 Tone: calm, reflective, precise.
-Style: minimal, confident, pragmatic.
-Focus: systems thinking, delivery tradeoffs, and clear takeaways.
+Style: minimal, confident, not hype.
 
 Constraints:
 - Under ${MAX_TEXT_LENGTH} characters
@@ -743,7 +573,8 @@ Constraints:
 - No questions
 - No links in the text
 
-Structure: observation -> tradeoff -> takeaway. Keep it to one sentence if possible.${extra}${linkNote}
+Structure: observation -> tradeoff -> takeaway. Keep it to one sentence if possible.${extra}
+A source link will be appended after the text.
 
 Signal:
 Title: ${signal.title}
@@ -800,10 +631,6 @@ function loadPosted() {
 function savePosted(entry) {
   const data = loadPosted();
   data.push(entry);
-  const dir = path.dirname(POSTED_PATH);
-  if (dir && dir !== ".") {
-    fs.mkdirSync(dir, { recursive: true });
-  }
   fs.writeFileSync(POSTED_PATH, JSON.stringify(data, null, 2));
 }
 
@@ -834,9 +661,8 @@ function savePosted(entry) {
       throw new Error("Generated tweet is too long after the link.");
     }
 
-    const canAttachImage = INCLUDE_IMAGES && !(INCLUDE_LINKS && signal.url);
-    const imageUrl = canAttachImage ? await resolveSignalImage(signal) : null;
-    const mediaId = canAttachImage ? await uploadImageFromUrl(imageUrl) : null;
+    const imageUrl = await resolveSignalImage(signal);
+    const mediaId = await uploadImageFromUrl(imageUrl);
 
     if (DRY_RUN) {
       console.log("DRY RUN - Tweet NOT posted:");
@@ -844,25 +670,8 @@ function savePosted(entry) {
       console.log(`Source: ${signal.source}`);
       console.log(`Title: ${signal.title}`);
       if (signal.url) console.log(`Link: ${signal.url}`);
-      if (canAttachImage && imageUrl) console.log(`Image: ${imageUrl}`);
-      if (!canAttachImage && INCLUDE_LINKS && signal.url) {
-        console.log("Image: skipped (link card will use OG image)");
-      }
+      if (imageUrl) console.log(`Image: ${imageUrl}`);
       console.log(`Length: ${estimatedLength}/${MAX_TWEET_LENGTH}`);
-      if (DRY_RUN_SAVE) {
-        savePosted({
-          date: new Date().toISOString(),
-          sourceId: signal.id,
-          source: signal.source,
-          category: signal.category,
-          title: signal.title,
-          url: signal.url,
-          fingerprint: buildFingerprint(signal.title),
-          imageUrl,
-          tweet: finalTweet,
-          dryRun: true,
-        });
-      }
       return;
     }
 
