@@ -1,0 +1,21 @@
+{
+  "name": "daily-tech-tweet",
+  "version": "1.0.0",
+  "description": "",
+  "main": "tweet.js",
+  "type": "module",
+  "scripts": {
+    "start": "node tweet.js",
+    "dry-run": "DRY_RUN=true node tweet.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.25.0",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "node-fetch": "^3.3.2",
+    "twitter-api-v2": "^1.28.0"
+  }
+}
