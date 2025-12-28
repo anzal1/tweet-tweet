@@ -5,7 +5,21 @@ import { TwitterApi } from "twitter-api-v2";
 
 /* ================= CONFIG ================= */
 
-const POLLINATIONS_URL = "https://text.pollinations.ai/";
+const POLLINATIONS_URL = "https://gen.pollinations.ai/text/";
+const POLLINATIONS_MODEL = "openai-fast";
+const POLLINATIONS_SYSTEM = "You are helpful";
+// NOTE: This is the public token used on pollinations.ai; replace with your own if needed.
+const POLLINATIONS_TOKEN = "pk_WQYvjz9SpSpAcJdR";
+const POLLINATIONS_ORIGIN = "https://pollinations.ai";
+const POLLINATIONS_REFERER = "https://pollinations.ai/";
+const POLLINATIONS_TIMEOUT_MS = Number.parseInt(
+  process.env.POLLINATIONS_TIMEOUT_MS || "45000",
+  10
+);
+const POLLINATIONS_RETRIES = Number.parseInt(
+  process.env.POLLINATIONS_RETRIES || "1",
+  10
+);
 const HN_TOP_STORY = "https://hacker-news.firebaseio.com/v0/topstories.json";
 const HN_BEST_STORY = "https://hacker-news.firebaseio.com/v0/beststories.json";
 const HN_ITEM = "https://hacker-news.firebaseio.com/v0/item";
@@ -86,6 +100,11 @@ const POSTED_PATH = process.env.POSTED_PATH || "posted.json";
 const POSTED_LOOKBACK_DAYS = 14;
 const TWEET_SIMILARITY_THRESHOLD = 0.6;
 const CATEGORY_WEIGHTS = { evergreen: 0.7, trending: 0.3 };
+const THREAD_PROBABILITY = Number.parseFloat(
+  process.env.THREAD_PROBABILITY || "0.3"
+);
+const THREAD_MIN_TWEETS = 2;
+const THREAD_MAX_TWEETS = 3;
 const TOPIC_DOMAINS = new Set([
   "aws.amazon.com",
   "blog.cloudflare.com",
@@ -250,6 +269,92 @@ const TOPIC_KEYWORDS = [
   "roadmap",
   "announcement",
 ];
+const STOPWORDS = new Set([
+  "about",
+  "after",
+  "again",
+  "all",
+  "also",
+  "and",
+  "any",
+  "are",
+  "as",
+  "at",
+  "because",
+  "been",
+  "before",
+  "being",
+  "between",
+  "both",
+  "but",
+  "can",
+  "could",
+  "did",
+  "does",
+  "doing",
+  "for",
+  "from",
+  "had",
+  "has",
+  "have",
+  "having",
+  "how",
+  "into",
+  "its",
+  "just",
+  "like",
+  "more",
+  "most",
+  "new",
+  "not",
+  "now",
+  "off",
+  "our",
+  "out",
+  "over",
+  "some",
+  "such",
+  "than",
+  "that",
+  "the",
+  "their",
+  "them",
+  "then",
+  "there",
+  "these",
+  "they",
+  "this",
+  "those",
+  "through",
+  "too",
+  "use",
+  "used",
+  "using",
+  "very",
+  "via",
+  "was",
+  "were",
+  "what",
+  "when",
+  "where",
+  "which",
+  "while",
+  "with",
+  "without",
+  "you",
+  "your",
+]);
+const VAGUE_PHRASES = [
+  "game changer",
+  "cutting edge",
+  "paradigm shift",
+  "next level",
+  "in today's world",
+  "at the end of the day",
+  "revolutionary",
+  "future-proof",
+  "world-class",
+];
 
 const DRY_RUN = process.env.DRY_RUN === "true";
 const DRY_RUN_SAVE = process.env.DRY_RUN_SAVE !== "false";
@@ -298,6 +403,13 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
   }
 }
 
+function normalizeFetchError(err, url, timeoutMs) {
+  if (err?.name === "AbortError") {
+    return new Error(`Timeout after ${timeoutMs}ms for ${url}`);
+  }
+  return err;
+}
+
 async function fetchJson(url, { retries = 2, timeoutMs = 10000 } = {}) {
   let lastError;
 
@@ -309,7 +421,7 @@ async function fetchJson(url, { retries = 2, timeoutMs = 10000 } = {}) {
       }
       return await res.json();
     } catch (err) {
-      lastError = err;
+      lastError = normalizeFetchError(err, url, timeoutMs);
       if (attempt < retries) {
         await sleep(400 * attempt);
       }
@@ -319,18 +431,21 @@ async function fetchJson(url, { retries = 2, timeoutMs = 10000 } = {}) {
   throw lastError;
 }
 
-async function fetchText(url, { retries = 2, timeoutMs = 10000 } = {}) {
+async function fetchText(
+  url,
+  { retries = 2, timeoutMs = 10000, headers } = {}
+) {
   let lastError;
 
   for (let attempt = 1; attempt <= retries; attempt += 1) {
     try {
-      const res = await fetchWithTimeout(url, {}, timeoutMs);
+      const res = await fetchWithTimeout(url, { headers }, timeoutMs);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status} for ${url}`);
       }
       return await res.text();
     } catch (err) {
-      lastError = err;
+      lastError = normalizeFetchError(err, url, timeoutMs);
       if (attempt < retries) {
         await sleep(400 * attempt);
       }
@@ -338,6 +453,37 @@ async function fetchText(url, { retries = 2, timeoutMs = 10000 } = {}) {
   }
 
   throw lastError;
+}
+
+function buildPollinationsUrl(prompt) {
+  const params = new URLSearchParams({
+    model: POLLINATIONS_MODEL,
+  });
+  if (POLLINATIONS_SYSTEM) {
+    params.set("system", POLLINATIONS_SYSTEM);
+  }
+  return `${POLLINATIONS_URL}${encodeURIComponent(
+    prompt
+  )}?${params.toString()}`;
+}
+
+function pollinationsHeaders() {
+  const headers = {};
+  if (POLLINATIONS_TOKEN) {
+    headers.authorization = `Bearer ${POLLINATIONS_TOKEN}`;
+  }
+  if (POLLINATIONS_ORIGIN) headers.origin = POLLINATIONS_ORIGIN;
+  if (POLLINATIONS_REFERER) headers.referer = POLLINATIONS_REFERER;
+  return Object.keys(headers).length ? headers : undefined;
+}
+
+async function generateFromPollinations(prompt) {
+  const url = buildPollinationsUrl(prompt);
+  return fetchText(url, {
+    timeoutMs: POLLINATIONS_TIMEOUT_MS,
+    retries: POLLINATIONS_RETRIES,
+    headers: pollinationsHeaders(),
+  });
 }
 
 function stripTags(value) {
@@ -362,6 +508,12 @@ function cleanText(value) {
     .trim();
 }
 
+function truncateText(value, maxLength) {
+  const text = cleanText(value);
+  if (!text || text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
 function normalizeTweet(value) {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -370,6 +522,49 @@ function normalizeTweet(value) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractKeywords(text, max = 6) {
+  const words = cleanText(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ");
+  const parts = words.split(/\s+/).filter(Boolean);
+  const unique = [];
+  const seen = new Set();
+
+  for (const part of parts) {
+    if (part.length < 4 || STOPWORDS.has(part) || seen.has(part)) continue;
+    seen.add(part);
+    unique.push(part);
+    if (unique.length >= max) break;
+  }
+
+  return unique;
+}
+
+function signalKeywords(signal) {
+  if (!signal) return [];
+  if (signal.source === "GitHub Trending") {
+    return extractKeywords(
+      [signal.summary, signal.language].filter(Boolean).join(" ")
+    );
+  }
+  return extractKeywords(
+    [signal.title, signal.summary].filter(Boolean).join(" ")
+  );
+}
+
+function tweetHasSignalKeyword(tweet, signal) {
+  const keywords = signalKeywords(signal);
+  if (!keywords.length) return true;
+  return keywords.some((keyword) =>
+    new RegExp(`\\b${escapeRegExp(keyword)}\\b`, "i").test(tweet)
+  );
+}
+
+function findVaguePhrase(tweet) {
+  const lower = tweet.toLowerCase();
+  return VAGUE_PHRASES.find((phrase) => lower.includes(phrase)) || null;
 }
 
 function hostnameFromUrl(url) {
@@ -590,8 +785,7 @@ function isTweetTooSimilar(tweet, posted) {
       entry.tweetFingerprint ||
       (entry.tweet ? buildTweetFingerprint(entry.tweet) : "");
     if (!compare) return false;
-    return similarityScore(compare, fingerprint) >=
-      TWEET_SIMILARITY_THRESHOLD;
+    return similarityScore(compare, fingerprint) >= TWEET_SIMILARITY_THRESHOLD;
   });
 }
 
@@ -709,7 +903,10 @@ async function getGithubTrendingSignals(limit = 8) {
     const articleRegex = /<article[\s\S]*?<\/article>/gi;
     let match;
 
-    while ((match = articleRegex.exec(html)) !== null && signals.length < limit) {
+    while (
+      (match = articleRegex.exec(html)) !== null &&
+      signals.length < limit
+    ) {
       const block = match[0];
       const repoMatch = block.match(
         /<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i
@@ -842,8 +1039,11 @@ async function uploadImageFromUrl(imageUrl) {
 
 function buildPrompt(signal, guidance) {
   const extra = guidance ? `\n${guidance}` : "";
-  const summary = signal.summary ? `Summary: ${signal.summary}\n` : "";
-  const language = signal.language ? `Stack/Language: ${signal.language}\n` : "";
+  const summaryText = truncateText(signal.summary, 220);
+  const summary = summaryText ? `Summary: ${summaryText}\n` : "";
+  const language = signal.language
+    ? `Stack/Language: ${signal.language}\n`
+    : "";
   const guard =
     "\nDo not mention the source name. Do not repeat the title verbatim; paraphrase it.";
   const repoGuard =
@@ -854,19 +1054,17 @@ function buildPrompt(signal, guidance) {
   return `
 Write one original tweet.
 
-Voice: engineering tech lead, builder mindset.
-Tone: calm, reflective, precise, engaging.
+Voice: engineering tech lead; calm, precise, engaging.
 Style: minimal, confident, pragmatic.
-Focus: systems thinking, delivery tradeoffs, and clear takeaways.
+Goal: observation -> tradeoff -> takeaway (one sentence if possible).
+Be specific: include one concrete detail and 1-2 key terms from the title/summary.
+Avoid vague phrasing and hedging.
 
 Constraints:
 - Under ${MAX_TEXT_LENGTH} characters
-- No emojis
-- No hashtags
-- No questions
-- No links in the text
+- No emojis, hashtags, questions, or links in the text
 
-Structure: observation -> tradeoff -> takeaway. Keep it to one sentence if possible.${extra}${guard}${repoGuard}
+Do not mention the source or repeat the title verbatim.${extra}${guard}${repoGuard}
 A source link will be appended after the text.
 
 Signal:
@@ -876,16 +1074,95 @@ Category: ${signal.category}
 `.trim();
 }
 
+function buildThreadPrompt(signal, guidance, count) {
+  const extra = guidance ? `\n${guidance}` : "";
+  const summaryText = truncateText(signal.summary, 200);
+  const summary = summaryText ? `Summary: ${summaryText}\n` : "";
+  const language = signal.language
+    ? `Stack/Language: ${signal.language}\n`
+    : "";
+  const guard =
+    "\nDo not mention the source name. Do not repeat the title verbatim; paraphrase it.";
+  const repoGuard =
+    signal.source === "GitHub Trending"
+      ? " Avoid listing the repo owner/name."
+      : "";
+  const arc =
+    count === 2
+      ? "Thread arc:\n- Tweet 1: observation with concrete detail\n- Tweet 2: tradeoff -> takeaway"
+      : "Thread arc:\n- Tweet 1: observation with concrete detail\n- Tweet 2: tradeoff\n- Tweet 3: takeaway";
+
+  return `
+Write a short tweet thread of ${count} tweets.
+
+Voice: engineering tech lead; calm, precise, engaging.
+Style: minimal, confident, pragmatic.
+Goal: observation -> tradeoff -> takeaway across the thread.
+Be specific: include one concrete detail and 1-2 key terms from the title/summary.
+Avoid vague phrasing and hedging.
+
+Constraints:
+- Output exactly ${count} lines, one tweet per line
+- Prefix each line with "1/${count} ", "2/${count} ", etc.
+- Under ${MAX_TEXT_LENGTH} characters per line
+- No emojis, hashtags, questions, or links in the text
+
+${arc}
+Do not mention the source or repeat the title verbatim.${extra}${guard}${repoGuard}
+A source link will be appended to the first tweet.
+
+Signal:
+Title: ${signal.title}
+${summary}${language}Source: ${signal.source}
+Category: ${signal.category}
+`.trim();
+}
+
+function normalizeThreadLine(line, index, count) {
+  let text = line.trim();
+  text = text.replace(/^\d+\s*\/\s*\d+\s+/, "");
+  const prefix = `${index + 1}/${count} `;
+  return normalizeTweet(`${prefix}${text}`);
+}
+
+function parseThread(text, count) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length !== count) return null;
+  return lines.map((line, index) => normalizeThreadLine(line, index, count));
+}
+
+function shouldGenerateThread() {
+  if (!Number.isFinite(THREAD_PROBABILITY) || THREAD_PROBABILITY <= 0) {
+    return false;
+  }
+  return Math.random() < Math.min(THREAD_PROBABILITY, 1);
+}
+
+function pickThreadLength() {
+  const min = Math.min(THREAD_MIN_TWEETS, THREAD_MAX_TWEETS);
+  const max = Math.max(THREAD_MIN_TWEETS, THREAD_MAX_TWEETS);
+  if (min === max) return min;
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
 async function generateTweet(signal, guidance) {
   const prompt = buildPrompt(signal, guidance);
-  const res = await fetchText(POLLINATIONS_URL + encodeURIComponent(prompt), {
-    timeoutMs: 20000,
-  });
+  const res = await generateFromPollinations(prompt);
 
   return normalizeTweet(res);
 }
 
-function validateTweetText(tweet, signal) {
+async function generateThread(signal, guidance, count) {
+  const prompt = buildThreadPrompt(signal, guidance, count);
+  const res = await generateFromPollinations(prompt);
+  return parseThread(res, count);
+}
+
+function validateTweetText(tweet, signal, { requireKeyword = true } = {}) {
   if (!tweet) return "Output is empty.";
   if (tweet.length > MAX_TEXT_LENGTH) {
     return `Keep it under ${MAX_TEXT_LENGTH} characters.`;
@@ -894,6 +1171,13 @@ function validateTweetText(tweet, signal) {
   if (/\?/.test(tweet)) return "Remove questions.";
   if (/https?:\/\//i.test(tweet)) return "Remove links from the text.";
   if (/[\u{1F300}-\u{1FAFF}]/u.test(tweet)) return "Remove emojis.";
+  const vaguePhrase = findVaguePhrase(tweet);
+  if (vaguePhrase) {
+    return `Avoid vague phrasing like "${vaguePhrase}".`;
+  }
+  if (requireKeyword && !tweetHasSignalKeyword(tweet, signal)) {
+    return "Include at least one concrete term from the title or summary.";
+  }
   if (signal?.source) {
     const sourceRegex = new RegExp(`\\b${escapeRegExp(signal.source)}\\b`, "i");
     if (sourceRegex.test(tweet)) {
@@ -926,6 +1210,60 @@ async function generateTweetWithRetries(signal, posted, attempts = 3) {
   }
 
   throw new Error("Failed to generate a valid tweet.");
+}
+
+async function generateThreadWithRetries(signal, posted, count, attempts = 3) {
+  let guidance = "";
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const thread = await generateThread(signal, guidance, count);
+    if (!thread) {
+      guidance = `Output exactly ${count} lines, one tweet per line.`;
+      continue;
+    }
+
+    let error = null;
+    for (let i = 0; i < thread.length; i += 1) {
+      const tweet = thread[i];
+      error = validateTweetText(tweet, signal, { requireKeyword: i === 0 });
+      if (error) break;
+    }
+
+    const combined = thread.join(" ");
+    if (!error && !isTweetTooSimilar(combined, posted)) return thread;
+    if (!error) {
+      guidance = "Make it meaningfully different from recent tweets.";
+      continue;
+    }
+
+    guidance = `Fix: ${error}`;
+  }
+
+  throw new Error("Failed to generate a valid thread.");
+}
+
+async function postThread(tweets, mediaId) {
+  let replyTo = null;
+  const posted = [];
+
+  for (let i = 0; i < tweets.length; i += 1) {
+    const payload = { text: tweets[i] };
+    if (i === 0 && mediaId) {
+      payload.media = { media_ids: [mediaId] };
+    }
+    if (replyTo) {
+      payload.reply = { in_reply_to_tweet_id: replyTo };
+    }
+
+    const res = await twitter.v2.tweet(payload);
+    const id = res?.data?.id;
+    if (id) {
+      posted.push(id);
+      replyTo = id;
+    }
+  }
+
+  return posted;
 }
 
 function loadPosted() {
@@ -963,27 +1301,42 @@ function savePosted(entry) {
       return;
     }
 
-    const tweetText = await generateTweetWithRetries(signal, recentPosted);
-    const finalTweet = appendLink(tweetText, signal.url);
-    const estimatedLength = estimateTweetLength(tweetText, signal.url);
+    const useThread = shouldGenerateThread();
+    const threadLength = useThread ? pickThreadLength() : 1;
+    const tweetTexts = useThread
+      ? await generateThreadWithRetries(signal, recentPosted, threadLength)
+      : [await generateTweetWithRetries(signal, recentPosted)];
+    const finalTweets = tweetTexts.map((tweet, index) =>
+      index === 0 ? appendLink(tweet, signal.url) : tweet
+    );
+    const estimatedLength = estimateTweetLength(tweetTexts[0], signal.url);
 
     if (estimatedLength > MAX_TWEET_LENGTH) {
       throw new Error("Generated tweet is too long after the link.");
+    }
+    for (let i = 1; i < tweetTexts.length; i += 1) {
+      if (tweetTexts[i].length > MAX_TWEET_LENGTH) {
+        throw new Error("Generated tweet is too long.");
+      }
     }
 
     const canAttachImage = INCLUDE_IMAGES && !(INCLUDE_LINKS && signal.url);
     const imageUrl = canAttachImage ? await resolveSignalImage(signal) : null;
     const mediaId = canAttachImage ? await uploadImageFromUrl(imageUrl) : null;
+    const combinedTweet = tweetTexts.join(" ");
 
     if (DRY_RUN) {
       console.log("DRY RUN - Tweet NOT posted:");
-      console.log(finalTweet);
+      finalTweets.forEach((tweet) => console.log(tweet));
       console.log(`Source: ${signal.source}`);
       console.log(`Title: ${signal.title}`);
       if (signal.url) console.log(`Link: ${signal.url}`);
       if (canAttachImage && imageUrl) console.log(`Image: ${imageUrl}`);
       if (!canAttachImage && INCLUDE_LINKS && signal.url) {
         console.log("Image: skipped (link card will use OG image)");
+      }
+      if (finalTweets.length > 1) {
+        console.log(`Thread: ${finalTweets.length} tweets`);
       }
       console.log(`Length: ${estimatedLength}/${MAX_TWEET_LENGTH}`);
       if (DRY_RUN_SAVE) {
@@ -996,20 +1349,24 @@ function savePosted(entry) {
           url: signal.url,
           fingerprint: buildFingerprint(signal.title),
           imageUrl,
-          tweet: finalTweet,
-          tweetFingerprint: buildTweetFingerprint(finalTweet),
+          tweet: combinedTweet,
+          threadTweets: finalTweets.length > 1 ? finalTweets : undefined,
+          tweetFingerprint: buildTweetFingerprint(combinedTweet),
           dryRun: true,
         });
       }
       return;
     }
 
-    const payload = { text: finalTweet };
-    if (mediaId) {
-      payload.media = { media_ids: [mediaId] };
+    if (finalTweets.length > 1) {
+      await postThread(finalTweets, mediaId);
+    } else {
+      const payload = { text: finalTweets[0] };
+      if (mediaId) {
+        payload.media = { media_ids: [mediaId] };
+      }
+      await twitter.v2.tweet(payload);
     }
-
-    await twitter.v2.tweet(payload);
 
     savePosted({
       date: new Date().toISOString(),
@@ -1020,12 +1377,13 @@ function savePosted(entry) {
       url: signal.url,
       fingerprint: buildFingerprint(signal.title),
       imageUrl,
-      tweet: finalTweet,
-      tweetFingerprint: buildTweetFingerprint(finalTweet),
+      tweet: combinedTweet,
+      threadTweets: finalTweets.length > 1 ? finalTweets : undefined,
+      tweetFingerprint: buildTweetFingerprint(combinedTweet),
     });
 
     console.log("Tweet posted successfully:");
-    console.log(finalTweet);
+    finalTweets.forEach((tweet) => console.log(tweet));
   } catch (err) {
     console.error("Error:", err.message);
   }
