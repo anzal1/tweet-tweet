@@ -17,7 +17,7 @@ const POLLINATIONS_TIMEOUT_MS = Number.parseInt(
   10
 );
 const POLLINATIONS_RETRIES = Number.parseInt(
-  process.env.POLLINATIONS_RETRIES || "1",
+  process.env.POLLINATIONS_RETRIES || "2",
   10
 );
 const HN_TOP_STORY = "https://hacker-news.firebaseio.com/v0/topstories.json";
@@ -52,31 +52,6 @@ const FEEDS = [
     category: "evergreen",
   },
   {
-    name: "BBC Sport Football",
-    url: "https://feeds.bbci.co.uk/sport/football/rss.xml",
-    category: "trending",
-  },
-  {
-    name: "The Guardian Football",
-    url: "https://www.theguardian.com/football/rss",
-    category: "trending",
-  },
-  {
-    name: "GamesIndustry.biz",
-    url: "https://www.gamesindustry.biz/feed",
-    category: "trending",
-  },
-  {
-    name: "IGN",
-    url: "https://feeds.feedburner.com/ign/all",
-    category: "trending",
-  },
-  {
-    name: "Polygon",
-    url: "https://www.polygon.com/rss/index.xml",
-    category: "trending",
-  },
-  {
     name: "The Verge",
     url: "https://www.theverge.com/rss/index.xml",
     category: "trending",
@@ -100,6 +75,9 @@ const POSTED_PATH = process.env.POSTED_PATH || "posted.json";
 const POSTED_LOOKBACK_DAYS = 14;
 const TWEET_SIMILARITY_THRESHOLD = 0.6;
 const CATEGORY_WEIGHTS = { evergreen: 0.7, trending: 0.3 };
+const DIVERSITY_LOOKBACK = 5;
+const CATEGORY_BALANCE_THRESHOLD = 2;
+const CATEGORY_BALANCE_SHIFT = 0.2;
 const THREAD_PROBABILITY = Number.parseFloat(
   process.env.THREAD_PROBABILITY || "0.3"
 );
@@ -120,15 +98,6 @@ const TOPIC_DOMAINS = new Set([
   "stripe.com",
   "www.postgresql.org",
   "arxiv.org",
-  "bbc.co.uk",
-  "bbci.co.uk",
-  "espn.com",
-  "fifa.com",
-  "premierleague.com",
-  "theguardian.com",
-  "gamesindustry.biz",
-  "ign.com",
-  "polygon.com",
   "theverge.com",
 ]);
 const TOPIC_KEYWORDS = [
@@ -238,31 +207,6 @@ const TOPIC_KEYWORDS = [
   "open source",
   "oss",
   "license",
-  "football",
-  "soccer",
-  "premier league",
-  "champions league",
-  "uefa",
-  "fifa",
-  "world cup",
-  "transfer",
-  "matchday",
-  "fixture",
-  "manager",
-  "injury",
-  "games",
-  "gaming",
-  "gameplay",
-  "esports",
-  "indie",
-  "steam",
-  "xbox",
-  "playstation",
-  "nintendo",
-  "switch",
-  "ps5",
-  "unity",
-  "unreal engine",
   "launch",
   "patch",
   "update",
@@ -355,6 +299,7 @@ const VAGUE_PHRASES = [
   "future-proof",
   "world-class",
 ];
+const SECTION_LABEL_REGEX = /\b(observation|tradeoff|takeaway)\b\s*[:\-]/i;
 
 const DRY_RUN = process.env.DRY_RUN === "true";
 const DRY_RUN_SAVE = process.env.DRY_RUN_SAVE !== "false";
@@ -410,16 +355,29 @@ function normalizeFetchError(err, url, timeoutMs) {
   return err;
 }
 
+function parseRetryAfterMs(res, attempt) {
+  const value = res.headers.get("retry-after");
+  if (value) {
+    const seconds = Number(value);
+    if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+    const date = Date.parse(value);
+    if (Number.isFinite(date)) return Math.max(0, date - Date.now());
+  }
+  return Math.min(8000, 1000 * attempt);
+}
+
 async function fetchJson(url, { retries = 2, timeoutMs = 10000 } = {}) {
   let lastError;
 
   for (let attempt = 1; attempt <= retries; attempt += 1) {
     try {
       const res = await fetchWithTimeout(url, {}, timeoutMs);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status} for ${url}`);
+      if (res.ok) return await res.json();
+      if (res.status === 429 && attempt < retries) {
+        await sleep(parseRetryAfterMs(res, attempt));
+        continue;
       }
-      return await res.json();
+      throw new Error(`HTTP ${res.status} for ${url}`);
     } catch (err) {
       lastError = normalizeFetchError(err, url, timeoutMs);
       if (attempt < retries) {
@@ -440,10 +398,12 @@ async function fetchText(
   for (let attempt = 1; attempt <= retries; attempt += 1) {
     try {
       const res = await fetchWithTimeout(url, { headers }, timeoutMs);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status} for ${url}`);
+      if (res.ok) return await res.text();
+      if (res.status === 429 && attempt < retries) {
+        await sleep(parseRetryAfterMs(res, attempt));
+        continue;
       }
-      return await res.text();
+      throw new Error(`HTTP ${res.status} for ${url}`);
     } catch (err) {
       lastError = normalizeFetchError(err, url, timeoutMs);
       if (attempt < retries) {
@@ -845,6 +805,40 @@ function pickWeighted(weights) {
   return entries[0]?.[0] || "evergreen";
 }
 
+function getBalancedCategoryWeights(recentPosted) {
+  const weights = { ...CATEGORY_WEIGHTS };
+  const recent = recentPosted.slice(-DIVERSITY_LOOKBACK);
+  if (!recent.length) return weights;
+
+  const counts = { evergreen: 0, trending: 0 };
+  for (const entry of recent) {
+    if (entry.category === "evergreen") counts.evergreen += 1;
+    if (entry.category === "trending") counts.trending += 1;
+  }
+
+  const diff = counts.trending - counts.evergreen;
+  if (Math.abs(diff) < CATEGORY_BALANCE_THRESHOLD) return weights;
+
+  if (diff > 0) {
+    weights.evergreen += CATEGORY_BALANCE_SHIFT;
+    weights.trending = Math.max(0.05, weights.trending - CATEGORY_BALANCE_SHIFT);
+  } else {
+    weights.trending += CATEGORY_BALANCE_SHIFT;
+    weights.evergreen = Math.max(0.05, weights.evergreen - CATEGORY_BALANCE_SHIFT);
+  }
+
+  return weights;
+}
+
+function getRecentSources(recentPosted) {
+  const recent = recentPosted.slice(-DIVERSITY_LOOKBACK);
+  const sources = new Set();
+  for (const entry of recent) {
+    if (entry.source) sources.add(entry.source);
+  }
+  return sources;
+}
+
 function selectSignal(signals, posted) {
   const recent = getRecentPosted(posted);
   const candidates = signals.filter(
@@ -857,11 +851,16 @@ function selectSignal(signals, posted) {
 
   if (!candidates.length) return null;
 
-  const desiredCategory = pickWeighted(CATEGORY_WEIGHTS);
-  const byCategory = candidates.filter(
+  const recentSources = getRecentSources(recent);
+  const diverseCandidates = candidates.filter(
+    (signal) => !recentSources.has(signal.source)
+  );
+  const sourcePool = diverseCandidates.length ? diverseCandidates : candidates;
+  const desiredCategory = pickWeighted(getBalancedCategoryWeights(recent));
+  const byCategory = sourcePool.filter(
     (signal) => signal.category === desiredCategory
   );
-  const pool = byCategory.length ? byCategory : candidates;
+  const pool = byCategory.length ? byCategory : sourcePool;
 
   return pool.sort((a, b) => scoreSignal(b) - scoreSignal(a))[0];
 }
@@ -1054,9 +1053,10 @@ function buildPrompt(signal, guidance) {
   return `
 Write one original tweet.
 
-Voice: engineering tech lead; calm, precise, engaging.
-Style: minimal, confident, pragmatic.
-Goal: observation -> tradeoff -> takeaway (one sentence if possible).
+Voice: senior engineer with social media personality; crisp, confident, slightly punchy.
+Style: minimal, pragmatic, memorable.
+Goal: hook -> context -> actionable takeaway (one sentence if possible).
+Open with a decisive claim or contrast. No section labels.
 Be specific: include one concrete detail and 1-2 key terms from the title/summary.
 Avoid vague phrasing and hedging.
 
@@ -1064,7 +1064,7 @@ Constraints:
 - Under ${MAX_TEXT_LENGTH} characters
 - No emojis, hashtags, questions, or links in the text
 
-Do not mention the source or repeat the title verbatim.${extra}${guard}${repoGuard}
+Do not mention the source or repeat the title verbatim. No labels like "Observation:" or "Tradeoff:".${extra}${guard}${repoGuard}
 A source link will be appended after the text.
 
 Signal:
@@ -1089,15 +1089,16 @@ function buildThreadPrompt(signal, guidance, count) {
       : "";
   const arc =
     count === 2
-      ? "Thread arc:\n- Tweet 1: observation with concrete detail\n- Tweet 2: tradeoff -> takeaway"
-      : "Thread arc:\n- Tweet 1: observation with concrete detail\n- Tweet 2: tradeoff\n- Tweet 3: takeaway";
+      ? "Thread arc:\n- Tweet 1: hook with concrete detail\n- Tweet 2: tradeoff -> actionable takeaway"
+      : "Thread arc:\n- Tweet 1: hook with concrete detail\n- Tweet 2: tradeoff\n- Tweet 3: actionable takeaway";
 
   return `
 Write a short tweet thread of ${count} tweets.
 
-Voice: engineering tech lead; calm, precise, engaging.
-Style: minimal, confident, pragmatic.
-Goal: observation -> tradeoff -> takeaway across the thread.
+Voice: senior engineer with social media personality; crisp, confident, slightly punchy.
+Style: minimal, pragmatic, memorable.
+Goal: hook -> context -> actionable takeaway across the thread.
+Open with a decisive claim or contrast. No section labels.
 Be specific: include one concrete detail and 1-2 key terms from the title/summary.
 Avoid vague phrasing and hedging.
 
@@ -1108,7 +1109,7 @@ Constraints:
 - No emojis, hashtags, questions, or links in the text
 
 ${arc}
-Do not mention the source or repeat the title verbatim.${extra}${guard}${repoGuard}
+Do not mention the source or repeat the title verbatim. No labels like "Observation:" or "Tradeoff:".${extra}${guard}${repoGuard}
 A source link will be appended to the first tweet.
 
 Signal:
@@ -1171,6 +1172,9 @@ function validateTweetText(tweet, signal, { requireKeyword = true } = {}) {
   if (/\?/.test(tweet)) return "Remove questions.";
   if (/https?:\/\//i.test(tweet)) return "Remove links from the text.";
   if (/[\u{1F300}-\u{1FAFF}]/u.test(tweet)) return "Remove emojis.";
+  if (SECTION_LABEL_REGEX.test(tweet)) {
+    return "Remove section labels like Observation/Tradeoff/Takeaway.";
+  }
   const vaguePhrase = findVaguePhrase(tweet);
   if (vaguePhrase) {
     return `Avoid vague phrasing like "${vaguePhrase}".`;
