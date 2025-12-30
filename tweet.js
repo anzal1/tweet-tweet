@@ -2,23 +2,17 @@ import "dotenv/config";
 import fetch from "node-fetch";
 import fs from "fs";
 import { TwitterApi } from "twitter-api-v2";
-
+import { GoogleGenAI } from "@google/genai";
 /* ================= CONFIG ================= */
 
-const POLLINATIONS_URL = "https://gen.pollinations.ai/text/";
-const POLLINATIONS_MODEL = "openai-fast";
-const POLLINATIONS_SYSTEM = "You are helpful";
-// NOTE: This is the public token used on pollinations.ai; replace with your own if needed.
-const POLLINATIONS_TOKEN = "pk_WQYvjz9SpSpAcJdR";
-const POLLINATIONS_ORIGIN = "https://pollinations.ai";
-const POLLINATIONS_REFERER = "https://pollinations.ai/";
-const POLLINATIONS_TIMEOUT_MS = Number.parseInt(
-  process.env.POLLINATIONS_TIMEOUT_MS || "45000",
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_TIMEOUT_MS = Number.parseInt(
+  process.env.GEMINI_TIMEOUT_MS || "45000",
   10
 );
-const POLLINATIONS_RETRIES = Number.parseInt(
-  process.env.POLLINATIONS_RETRIES || "2",
-  10
+const GEMINI_RETRIES = Math.max(
+  1,
+  Number.parseInt(process.env.GEMINI_RETRIES || "2", 10)
 );
 const HN_TOP_STORY = "https://hacker-news.firebaseio.com/v0/topstories.json";
 const HN_BEST_STORY = "https://hacker-news.firebaseio.com/v0/beststories.json";
@@ -306,6 +300,10 @@ const DRY_RUN_SAVE = process.env.DRY_RUN_SAVE !== "false";
 
 /* ================= SAFETY ================= */
 
+if (!process.env.GEMINI_API_KEY) {
+  throw new Error("Missing required env variable: GEMINI_API_KEY");
+}
+
 if (!DRY_RUN) {
   const required = [
     "X_API_KEY",
@@ -320,6 +318,10 @@ if (!DRY_RUN) {
     }
   }
 }
+
+/* ================= GEMINI ================= */
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 /* ================= TWITTER ================= */
 
@@ -343,6 +345,22 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
 
   try {
     return await fetch(url, { ...options, headers, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function withTimeout(promise, timeoutMs, label = "operation") {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`Timeout after ${timeoutMs}ms for ${label}`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
   } finally {
     clearTimeout(timeoutId);
   }
@@ -415,35 +433,47 @@ async function fetchText(
   throw lastError;
 }
 
-function buildPollinationsUrl(prompt) {
-  const params = new URLSearchParams({
-    model: POLLINATIONS_MODEL,
-  });
-  if (POLLINATIONS_SYSTEM) {
-    params.set("system", POLLINATIONS_SYSTEM);
+async function extractGeminiText(result) {
+  if (!result) return "";
+  if (typeof result === "string") return result;
+  if (typeof result.text === "function") {
+    return await result.text();
   }
-  return `${POLLINATIONS_URL}${encodeURIComponent(
-    prompt
-  )}?${params.toString()}`;
+  if (typeof result.text === "string") return result.text;
+  const parts = result?.candidates?.[0]?.content?.parts;
+  if (Array.isArray(parts)) {
+    return parts.map((part) => part?.text).filter(Boolean).join("");
+  }
+  return "";
 }
 
-function pollinationsHeaders() {
-  const headers = {};
-  if (POLLINATIONS_TOKEN) {
-    headers.authorization = `Bearer ${POLLINATIONS_TOKEN}`;
-  }
-  if (POLLINATIONS_ORIGIN) headers.origin = POLLINATIONS_ORIGIN;
-  if (POLLINATIONS_REFERER) headers.referer = POLLINATIONS_REFERER;
-  return Object.keys(headers).length ? headers : undefined;
-}
+async function generateFromGemini(prompt) {
+  let lastError;
 
-async function generateFromPollinations(prompt) {
-  const url = buildPollinationsUrl(prompt);
-  return fetchText(url, {
-    timeoutMs: POLLINATIONS_TIMEOUT_MS,
-    retries: POLLINATIONS_RETRIES,
-    headers: pollinationsHeaders(),
-  });
+  for (let attempt = 1; attempt <= GEMINI_RETRIES; attempt += 1) {
+    try {
+      const result = await withTimeout(
+        ai.models.generateContent({
+          model: GEMINI_MODEL,
+          contents: prompt,
+        }),
+        GEMINI_TIMEOUT_MS,
+        "Gemini generateContent"
+      );
+      const text = await extractGeminiText(result);
+      if (!text) {
+        throw new Error("Empty response from Gemini.");
+      }
+      return text;
+    } catch (err) {
+      lastError = err;
+      if (attempt < GEMINI_RETRIES) {
+        await sleep(400 * attempt);
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 function stripTags(value) {
@@ -821,10 +851,16 @@ function getBalancedCategoryWeights(recentPosted) {
 
   if (diff > 0) {
     weights.evergreen += CATEGORY_BALANCE_SHIFT;
-    weights.trending = Math.max(0.05, weights.trending - CATEGORY_BALANCE_SHIFT);
+    weights.trending = Math.max(
+      0.05,
+      weights.trending - CATEGORY_BALANCE_SHIFT
+    );
   } else {
     weights.trending += CATEGORY_BALANCE_SHIFT;
-    weights.evergreen = Math.max(0.05, weights.evergreen - CATEGORY_BALANCE_SHIFT);
+    weights.evergreen = Math.max(
+      0.05,
+      weights.evergreen - CATEGORY_BALANCE_SHIFT
+    );
   }
 
   return weights;
@@ -1152,14 +1188,14 @@ function pickThreadLength() {
 
 async function generateTweet(signal, guidance) {
   const prompt = buildPrompt(signal, guidance);
-  const res = await generateFromPollinations(prompt);
+  const res = await generateFromGemini(prompt);
 
   return normalizeTweet(res);
 }
 
 async function generateThread(signal, guidance, count) {
   const prompt = buildThreadPrompt(signal, guidance, count);
-  const res = await generateFromPollinations(prompt);
+  const res = await generateFromGemini(prompt);
   return parseThread(res, count);
 }
 
