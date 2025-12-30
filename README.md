@@ -17,7 +17,7 @@ Automated tweet generator that pulls from tech, football, gaming, and trending s
    - `X_API_SECRET`
    - `X_ACCESS_TOKEN`
    - `X_ACCESS_SECRET`
-   - `GEMINI_API_KEY`
+   - `GROQ_API_KEY`
 3. Dry run (no posting):
    - `DRY_RUN=true node tweet.js`
 4. Post for real:
@@ -45,10 +45,10 @@ Environment variables:
 - `INCLUDE_LINKS=false` to skip appending links
 - `INCLUDE_IMAGES=false` to skip media uploads (default uses OG cards when links exist)
 - `POSTED_PATH=.cache/posted.json` to store history in a custom path
-- `GEMINI_API_KEY` for Gemini AI requests
-- `GEMINI_MODEL=gemini-2.5-flash` to override the model
-- `GEMINI_TIMEOUT_MS=45000` to override the Gemini request timeout
-- `GEMINI_RETRIES=2` to override the Gemini request retry count
+- `GROQ_API_KEY` for Groq AI requests
+- `GROQ_MODEL=llama-3.3-70b-versatile` to override the model
+- `GROQ_TIMEOUT_MS=45000` to override the Groq request timeout
+- `GROQ_RETRIES=2` to override the Groq request retry count
 
 Tune content:
 - Update feeds and keyword/domain filters in `tweet.js`.

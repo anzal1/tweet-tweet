@@ -2,17 +2,17 @@ import "dotenv/config";
 import fetch from "node-fetch";
 import fs from "fs";
 import { TwitterApi } from "twitter-api-v2";
-import { GoogleGenAI } from "@google/genai";
+import Groq from "groq-sdk";
 /* ================= CONFIG ================= */
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-const GEMINI_TIMEOUT_MS = Number.parseInt(
-  process.env.GEMINI_TIMEOUT_MS || "45000",
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const GROQ_TIMEOUT_MS = Number.parseInt(
+  process.env.GROQ_TIMEOUT_MS || "45000",
   10
 );
-const GEMINI_RETRIES = Math.max(
+const GROQ_RETRIES = Math.max(
   1,
-  Number.parseInt(process.env.GEMINI_RETRIES || "2", 10)
+  Number.parseInt(process.env.GROQ_RETRIES || "2", 10)
 );
 const HN_TOP_STORY = "https://hacker-news.firebaseio.com/v0/topstories.json";
 const HN_BEST_STORY = "https://hacker-news.firebaseio.com/v0/beststories.json";
@@ -300,8 +300,8 @@ const DRY_RUN_SAVE = process.env.DRY_RUN_SAVE !== "false";
 
 /* ================= SAFETY ================= */
 
-if (!process.env.GEMINI_API_KEY) {
-  throw new Error("Missing required env variable: GEMINI_API_KEY");
+if (!process.env.GROQ_API_KEY) {
+  throw new Error("Missing required env variable: GROQ_API_KEY");
 }
 
 if (!DRY_RUN) {
@@ -319,9 +319,9 @@ if (!DRY_RUN) {
   }
 }
 
-/* ================= GEMINI ================= */
+/* ================= GROQ ================= */
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 /* ================= TWITTER ================= */
 
@@ -433,41 +433,33 @@ async function fetchText(
   throw lastError;
 }
 
-async function extractGeminiText(result) {
-  if (!result) return "";
-  if (typeof result === "string") return result;
-  if (typeof result.text === "function") {
-    return await result.text();
-  }
-  if (typeof result.text === "string") return result.text;
-  const parts = result?.candidates?.[0]?.content?.parts;
-  if (Array.isArray(parts)) {
-    return parts.map((part) => part?.text).filter(Boolean).join("");
-  }
-  return "";
+function extractGroqText(result) {
+  const content = result?.choices?.[0]?.message?.content;
+  if (!content) return "";
+  return String(content);
 }
 
-async function generateFromGemini(prompt) {
+async function generateFromGroq(prompt) {
   let lastError;
 
-  for (let attempt = 1; attempt <= GEMINI_RETRIES; attempt += 1) {
+  for (let attempt = 1; attempt <= GROQ_RETRIES; attempt += 1) {
     try {
       const result = await withTimeout(
-        ai.models.generateContent({
-          model: GEMINI_MODEL,
-          contents: prompt,
+        groq.chat.completions.create({
+          model: GROQ_MODEL,
+          messages: [{ role: "user", content: prompt }],
         }),
-        GEMINI_TIMEOUT_MS,
-        "Gemini generateContent"
+        GROQ_TIMEOUT_MS,
+        "Groq chat completion"
       );
-      const text = await extractGeminiText(result);
+      const text = extractGroqText(result);
       if (!text) {
-        throw new Error("Empty response from Gemini.");
+        throw new Error("Empty response from Groq.");
       }
       return text;
     } catch (err) {
       lastError = err;
-      if (attempt < GEMINI_RETRIES) {
+      if (attempt < GROQ_RETRIES) {
         await sleep(400 * attempt);
       }
     }
@@ -1188,14 +1180,14 @@ function pickThreadLength() {
 
 async function generateTweet(signal, guidance) {
   const prompt = buildPrompt(signal, guidance);
-  const res = await generateFromGemini(prompt);
+  const res = await generateFromGroq(prompt);
 
   return normalizeTweet(res);
 }
 
 async function generateThread(signal, guidance, count) {
   const prompt = buildThreadPrompt(signal, guidance, count);
-  const res = await generateFromGemini(prompt);
+  const res = await generateFromGroq(prompt);
   return parseThread(res, count);
 }
 
