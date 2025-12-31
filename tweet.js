@@ -20,6 +20,7 @@ const HN_ITEM = "https://hacker-news.firebaseio.com/v0/item";
 const GH_TRENDING = "https://github.com/trending?since=daily";
 
 const FEEDS = [
+  // === EVERGREEN: Deep technical content from top engineering teams ===
   {
     name: "Cloudflare Blog",
     url: "https://blog.cloudflare.com/rss/",
@@ -41,13 +42,90 @@ const FEEDS = [
     category: "evergreen",
   },
   {
+    name: "Google Developers Blog",
+    url: "https://developers.googleblog.com/feeds/posts/default?alt=rss",
+    category: "evergreen",
+  },
+  {
+    name: "Meta Engineering",
+    url: "https://engineering.fb.com/feed/",
+    category: "evergreen",
+  },
+  {
+    name: "Uber Engineering",
+    url: "https://www.uber.com/blog/engineering/rss/",
+    category: "evergreen",
+  },
+  {
+    name: "Spotify Engineering",
+    url: "https://engineering.atspotify.com/feed/",
+    category: "evergreen",
+  },
+  {
+    name: "Discord Blog",
+    url: "https://discord.com/blog/rss.xml",
+    category: "evergreen",
+  },
+  {
+    name: "Slack Engineering",
+    url: "https://slack.engineering/feed/",
+    category: "evergreen",
+  },
+  {
+    name: "LinkedIn Engineering",
+    url: "https://engineering.linkedin.com/blog.rss.html",
+    category: "evergreen",
+  },
+  {
+    name: "Dropbox Tech",
+    url: "https://dropbox.tech/feed",
+    category: "evergreen",
+  },
+  {
+    name: "GitHub Blog",
+    url: "https://github.blog/feed/",
+    category: "evergreen",
+  },
+  {
+    name: "Mozilla Hacks",
+    url: "https://hacks.mozilla.org/feed/",
+    category: "evergreen",
+  },
+  {
+    name: "Vercel Blog",
+    url: "https://vercel.com/atom",
+    category: "evergreen",
+  },
+  // === ACADEMIC / RESEARCH ===
+  {
     name: "ArXiv cs.SE",
     url: "https://export.arxiv.org/api/query?search_query=cat:cs.SE&sortBy=lastUpdatedDate&sortOrder=descending&max_results=6",
     category: "evergreen",
   },
   {
+    name: "ArXiv cs.LG",
+    url: "https://export.arxiv.org/api/query?search_query=cat:cs.LG&sortBy=lastUpdatedDate&sortOrder=descending&max_results=6",
+    category: "evergreen",
+  },
+  // === TRENDING: News and current tech happenings ===
+  {
     name: "The Verge",
     url: "https://www.theverge.com/rss/index.xml",
+    category: "trending",
+  },
+  {
+    name: "TechCrunch",
+    url: "https://techcrunch.com/feed/",
+    category: "trending",
+  },
+  {
+    name: "Ars Technica",
+    url: "https://feeds.arstechnica.com/arstechnica/technology-lab",
+    category: "trending",
+  },
+  {
+    name: "OpenAI Blog",
+    url: "https://openai.com/blog/rss/",
     category: "trending",
   },
 ];
@@ -78,11 +156,13 @@ const THREAD_PROBABILITY = Number.parseFloat(
 const THREAD_MIN_TWEETS = 2;
 const THREAD_MAX_TWEETS = 3;
 const TOPIC_DOMAINS = new Set([
+  // Core tech companies
   "aws.amazon.com",
   "blog.cloudflare.com",
   "cloudflare.com",
   "docs.github.com",
   "github.com",
+  "github.blog",
   "kubernetes.io",
   "netflixtechblog.com",
   "openai.com",
@@ -92,18 +172,51 @@ const TOPIC_DOMAINS = new Set([
   "stripe.com",
   "www.postgresql.org",
   "arxiv.org",
+  // Engineering blogs
+  "engineering.fb.com",
+  "engineering.atspotify.com",
+  "engineering.linkedin.com",
+  "slack.engineering",
+  "dropbox.tech",
+  "hacks.mozilla.org",
+  "developers.googleblog.com",
+  "discord.com",
+  "uber.com",
+  "vercel.com",
+  // News sources
   "theverge.com",
+  "techcrunch.com",
+  "arstechnica.com",
+  "wired.com",
 ]);
 const TOPIC_KEYWORDS = [
+  // APIs & Development
   "api",
   "sdk",
   "cli",
+  "framework",
+  "library",
+  "package",
+  "npm",
+  "crate",
+  "module",
+  // Databases
   "database",
   "db",
   "postgres",
   "mysql",
   "redis",
+  "mongodb",
+  "sqlite",
+  "supabase",
+  "planetscale",
+  "neon",
+  "cockroachdb",
   "cache",
+  "query",
+  "sql",
+  "nosql",
+  // Performance & Scale
   "latency",
   "throughput",
   "scalability",
@@ -112,6 +225,10 @@ const TOPIC_KEYWORDS = [
   "consensus",
   "raft",
   "paxos",
+  "sharding",
+  "partition",
+  "replication",
+  // Infrastructure
   "kubernetes",
   "k8s",
   "docker",
@@ -123,31 +240,66 @@ const TOPIC_KEYWORDS = [
   "vm",
   "garbage collector",
   "gc",
+  "wasm",
+  "webassembly",
+  // Observability
   "observability",
   "logging",
   "metrics",
   "tracing",
+  "monitoring",
+  "datadog",
+  "grafana",
+  "prometheus",
+  // DevOps & SRE
   "sre",
   "devops",
   "infrastructure",
   "infra",
+  "terraform",
+  "pulumi",
+  "iac",
+  // Cloud
   "cloud",
   "aws",
   "gcp",
   "azure",
   "serverless",
+  "lambda",
+  "edge",
+  "cdn",
+  "cloudflare",
+  "vercel",
+  "netlify",
+  // Architecture
   "microservice",
   "monolith",
+  "event-driven",
+  "cqrs",
+  "saga",
   "frontend",
   "backend",
   "full stack",
+  "fullstack",
+  // Languages & Frameworks
   "node",
   "react",
+  "nextjs",
+  "vue",
+  "svelte",
+  "angular",
   "rust",
   "go",
+  "golang",
   "python",
   "typescript",
   "javascript",
+  "swift",
+  "kotlin",
+  "zig",
+  "elixir",
+  "haskell",
+  // Security
   "security",
   "encryption",
   "vulnerability",
@@ -155,11 +307,15 @@ const TOPIC_KEYWORDS = [
   "auth",
   "oauth",
   "jwt",
+  "passkey",
+  "zero trust",
+  // CI/CD & Release
   "performance",
   "benchmark",
   "ci",
   "cd",
   "ci/cd",
+  "github actions",
   "deployment",
   "release",
   "incident",
@@ -168,14 +324,33 @@ const TOPIC_KEYWORDS = [
   "availability",
   "reliability",
   "testing",
+  "unit test",
+  "e2e",
+  "integration test",
   "qa",
   "feature flag",
   "rollout",
+  "canary",
+  "blue-green",
+  // AI & ML
   "ml",
   "ai",
   "llm",
+  "gpt",
+  "claude",
+  "gemini",
+  "transformer",
   "model",
   "training",
+  "fine-tuning",
+  "rag",
+  "embedding",
+  "vector",
+  "neural",
+  "prompt",
+  "inference",
+  "diffusion",
+  // Data
   "data",
   "pipeline",
   "etl",
@@ -184,28 +359,55 @@ const TOPIC_KEYWORDS = [
   "kafka",
   "queue",
   "messaging",
+  "pubsub",
+  "spark",
+  "flink",
+  // Networking
   "http",
+  "http2",
+  "http3",
+  "quic",
   "tcp",
   "dns",
-  "cdn",
-  "edge",
   "load balancer",
   "proxy",
+  "reverse proxy",
+  "nginx",
   "rpc",
   "grpc",
   "graphql",
+  "rest",
+  "websocket",
+  "sse",
+  // Mobile & Web
   "mobile",
   "ios",
   "android",
+  "flutter",
+  "react native",
+  "pwa",
+  "service worker",
+  // Open Source
   "git",
   "open source",
   "oss",
   "license",
+  "mit",
+  "apache",
+  // Events
   "launch",
   "patch",
   "update",
   "roadmap",
   "announcement",
+  "deprecation",
+  // Modern tooling
+  "vite",
+  "turbo",
+  "bun",
+  "deno",
+  "esbuild",
+  "swc",
 ];
 const STOPWORDS = new Set([
   "about",
@@ -890,6 +1092,55 @@ function isDuplicate(signal, posted) {
   });
 }
 
+// Extract matching tech topics from text for topic-based diversity
+function extractTopics(text) {
+  const lower = cleanText(text).toLowerCase();
+  const found = new Set();
+  
+  for (const keyword of TOPIC_KEYWORDS) {
+    if (keyword.includes(" ")) {
+      if (lower.includes(keyword)) found.add(keyword);
+    } else {
+      const regex = new RegExp(`\\b${escapeRegExp(keyword)}\\b`, "i");
+      if (regex.test(lower)) found.add(keyword);
+    }
+  }
+  
+  return Array.from(found);
+}
+
+// Check if we've recently tweeted about the same primary topic
+const TOPIC_COOLDOWN_HOURS = 48; // Don't tweet about same topic within 48 hours
+
+function hasRecentTopicOverlap(signal, recentPosted) {
+  const signalTopics = extractTopics(
+    [signal.title, signal.summary].filter(Boolean).join(" ")
+  );
+  
+  if (signalTopics.length === 0) return false;
+  
+  const cutoff = Date.now() - TOPIC_COOLDOWN_HOURS * 60 * 60 * 1000;
+  const veryRecent = recentPosted.filter((entry) => {
+    const timestamp = Date.parse(entry.date);
+    return Number.isFinite(timestamp) && timestamp >= cutoff;
+  });
+  
+  for (const entry of veryRecent) {
+    const entryTopics = entry.topics || extractTopics(
+      [entry.title, entry.tweet].filter(Boolean).join(" ")
+    );
+    
+    // Check for significant topic overlap (2+ shared topics)
+    const overlap = signalTopics.filter((t) => entryTopics.includes(t));
+    if (overlap.length >= 2) return true;
+    
+    // Or exact primary topic match (first topic is usually most relevant)
+    if (signalTopics[0] && entryTopics.includes(signalTopics[0])) return true;
+  }
+  
+  return false;
+}
+
 function scoreSignal(signal) {
   let score = 0;
 
@@ -965,7 +1216,8 @@ function selectSignal(signals, posted) {
       signal.title &&
       isOnTopic(signal) &&
       !isStale(signal) &&
-      !isDuplicate(signal, recent)
+      !isDuplicate(signal, recent) &&
+      !hasRecentTopicOverlap(signal, recent)
   );
 
   if (!candidates.length) return null;
@@ -1518,6 +1770,7 @@ function savePosted(entry) {
           title: signal.title,
           url: signal.url,
           fingerprint: buildFingerprint(signal.title),
+          topics: extractTopics([signal.title, signal.summary, combinedTweet].filter(Boolean).join(" ")),
           imageUrl,
           tweet: combinedTweet,
           threadTweets: finalTweets.length > 1 ? finalTweets : undefined,
@@ -1546,6 +1799,7 @@ function savePosted(entry) {
       title: signal.title,
       url: signal.url,
       fingerprint: buildFingerprint(signal.title),
+      topics: extractTopics([signal.title, signal.summary, combinedTweet].filter(Boolean).join(" ")),
       imageUrl,
       tweet: combinedTweet,
       threadTweets: finalTweets.length > 1 ? finalTweets : undefined,

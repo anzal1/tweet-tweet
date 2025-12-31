@@ -66,6 +66,39 @@ The bot uses several techniques to make tweets sound more human and engaging:
 - **Banned Phrases**: Filters out 30+ corporate/AI-sounding phrases ("game changer", "leverage", "synergy", etc.)
 - **Rhetorical Questions**: Allows one question per tweet for engagement
 
+## Duplicate Prevention (4 Layers)
+The bot uses multiple strategies to avoid repetitive content:
+
+1. **Source ID & URL Match**: Exact match prevention - won't tweet the same article twice
+2. **Title Fingerprinting**: Uses Jaccard similarity on word sets (threshold: 60%) to catch similar titles
+3. **Tweet Content Similarity**: Compares generated tweet text against recent posts
+4. **Topic Cooldown** (48 hours): Extracts tech topics (kubernetes, react, LLM, etc.) and prevents tweeting about the same topic too frequently
+
+All checks use a 14-day rolling window stored in `posted.json`.
+
+## Content Sources (20+ feeds)
+Curated from the best engineering blogs and tech news:
+
+**Engineering Blogs (Evergreen)**:
+- Cloudflare, Stripe, Netflix, AWS Architecture
+- Google Developers, Meta Engineering, Uber, Spotify
+- Discord, Slack, LinkedIn, Dropbox, GitHub, Mozilla, Vercel
+
+**Research**: ArXiv cs.SE (Software Engineering) and cs.LG (Machine Learning)
+
+**Trending News**: The Verge, TechCrunch, Ars Technica, OpenAI Blog
+
+**Live Sources**: Hacker News (Top & Best), GitHub Trending
+
+## Topic Coverage
+The bot recognizes 150+ tech keywords across categories:
+- **Languages**: TypeScript, Rust, Go, Python, Zig, Elixir, etc.
+- **Frameworks**: React, Next.js, Vue, Svelte, etc.
+- **Infrastructure**: Kubernetes, Docker, Terraform, etc.
+- **Databases**: PostgreSQL, Redis, MongoDB, Supabase, etc.
+- **AI/ML**: LLM, GPT, RAG, embeddings, fine-tuning, etc.
+- **DevOps**: CI/CD, GitHub Actions, observability, etc.
+
 ## Suggested cadence
 - 3 to 5 posts per week is a good starting point.
 - The current schedule posts weekdays once per day.
