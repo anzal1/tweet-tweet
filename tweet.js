@@ -292,8 +292,99 @@ const VAGUE_PHRASES = [
   "revolutionary",
   "future-proof",
   "world-class",
+  "groundbreaking",
+  "best practices",
+  "leverage",
+  "synergy",
+  "ecosystem",
+  "scalable solution",
+  "robust",
+  "seamless",
+  "state-of-the-art",
+  "innovative approach",
+  "transformative",
+  "mission-critical",
+  "bleeding edge",
+  "thought leader",
+  "disruptive",
+  "holistic",
+  "empower",
+  "unlock the power",
+  "take your",
+  "supercharge",
+  "deep dive into",
 ];
 const SECTION_LABEL_REGEX = /\b(observation|tradeoff|takeaway)\b\s*[:\-]/i;
+
+/* ================= HUMANIZATION VARIANTS ================= */
+
+const VOICE_VARIANTS = [
+  "senior engineer sharing a genuine 'aha' moment with colleagues",
+  "curious builder who just discovered something genuinely useful",
+  "pragmatic tech lead giving real-world advice based on experience",
+  "slightly opinionated dev who isn't afraid to share honest takes",
+  "engineer reflecting on lessons learned the hard way",
+  "friendly mentor explaining something they wish they knew earlier",
+  "tech enthusiast genuinely excited about a discovery",
+  "thoughtful practitioner connecting dots others miss",
+];
+
+const HOOK_PATTERNS = [
+  "Start with a surprising fact or specific number from the content",
+  "Start with a contrarian or unexpected statement",
+  "Start with a personal 'I' statement or anecdote",
+  "Start by challenging conventional wisdom",
+  "Start with 'TIL', 'Just realized', or 'Finally figured out'",
+  "Start with a direct comparison or contrast (X vs Y)",
+  "Start with what most people get wrong about this topic",
+  "Start with the practical impact or 'why this matters'",
+  "Start with a bold claim you'll back up",
+  "Start like you're continuing a conversation mid-thought",
+];
+
+const ENGAGEMENT_CLOSERS = [
+  "Worth a look.",
+  "Saved me hours.",
+  "Wish I knew this sooner.",
+  "Underrated.",
+  "Been using this for weeks.",
+  "Solid stuff.",
+  "Highly recommend.",
+  "Give it a shot.",
+  "Finally.",
+  "About time.",
+  "This is the way.",
+  "Bookmark it.",
+  "", // Sometimes no closer is best
+  "",
+  "",
+];
+
+const TIME_CONTEXTS = {
+  0: ["Sunday deep-dive:", "Weekend reading:", ""],
+  1: ["Monday momentum:", "Starting the week with:", ""],
+  2: ["", "", ""],
+  3: ["Midweek find:", "", ""],
+  4: ["", "", ""],
+  5: ["Friday learning:", "End-of-week gem:", ""],
+  6: ["Weekend project idea:", "Saturday exploration:", ""],
+};
+
+function pickRandom(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function getTimeContext() {
+  const day = new Date().getDay();
+  const options = TIME_CONTEXTS[day] || [""];
+  // Only use time context ~20% of the time to avoid being predictable
+  return Math.random() < 0.2 ? pickRandom(options) : "";
+}
+
+function shouldAddCloser() {
+  // Add engagement closer ~30% of the time
+  return Math.random() < 0.3;
+}
 
 const DRY_RUN = process.env.DRY_RUN === "true";
 const DRY_RUN_SAVE = process.env.DRY_RUN_SAVE !== "false";
@@ -1078,19 +1169,42 @@ function buildPrompt(signal, guidance) {
       ? " Avoid listing the repo owner/name."
       : "";
 
-  return `
-Write one original tweet.
+  // Humanization elements
+  const voice = pickRandom(VOICE_VARIANTS);
+  const hookPattern = pickRandom(HOOK_PATTERNS);
+  const timeContext = getTimeContext();
+  const timeInstruction = timeContext ? `\nOptionally start with: "${timeContext}"` : "";
+  const closerInstruction = shouldAddCloser() 
+    ? `\nEnd with a short punchy closer like: "${pickRandom(ENGAGEMENT_CLOSERS.filter(c => c))}"` 
+    : "";
 
-Voice: senior engineer with social media personality; crisp, confident, slightly punchy.
-Style: minimal, pragmatic, memorable.
-Goal: hook -> context -> actionable takeaway (one sentence if possible).
-Open with a decisive claim or contrast. No section labels.
-Be specific: include one concrete detail and 1-2 key terms from the title/summary.
-Avoid vague phrasing and hedging.
+  return `
+Write one original tweet that sounds like a real person, not a bot.
+
+Voice: ${voice}. Confident but never corporate or robotic.
+Tone: Casual, conversational, with genuine personality. Write like you're texting a smart colleague.
+${hookPattern}
+
+CRITICAL - Make it human:
+- Use contractions (it's, don't, won't, I've, we're)
+- First-person is encouraged ("I", "we", "my experience")
+- Include YOUR take: why this matters, what most people miss, or a mild hot take
+- Sound like you're sharing with a friend, not announcing to the world
+- Sentence fragments are fine. So is starting with "So" or "Honestly" or "Look,"
+- Be specific: one concrete detail from the source
+- Have an opinion - don't just describe, react${timeInstruction}${closerInstruction}
+
+Avoid:
+- Corporate-speak, buzzwords, or marketing language
+- Starting with "New:", "Announcing:", "Introducing:", or "Check out"
+- Generic phrases like "game changer", "cutting edge", "next level"
+- Sounding like a press release or product announcement
+- Being too formal or polished
 
 Constraints:
 - Under ${MAX_TEXT_LENGTH} characters
-- No emojis, hashtags, questions, or links in the text
+- No emojis, hashtags, or links in the text
+- Questions are okay if they're rhetorical and punchy (one max)
 
 Do not mention the source or repeat the title verbatim. No labels like "Observation:" or "Tradeoff:".${extra}${guard}${repoGuard}
 A source link will be appended after the text.
@@ -1115,28 +1229,50 @@ function buildThreadPrompt(signal, guidance, count) {
     signal.source === "GitHub Trending"
       ? " Avoid listing the repo owner/name."
       : "";
+  
+  // Humanization elements
+  const voice = pickRandom(VOICE_VARIANTS);
+  const hookPattern = pickRandom(HOOK_PATTERNS);
+
   const arc =
     count === 2
-      ? "Thread arc:\n- Tweet 1: hook with concrete detail\n- Tweet 2: tradeoff -> actionable takeaway"
-      : "Thread arc:\n- Tweet 1: hook with concrete detail\n- Tweet 2: tradeoff\n- Tweet 3: actionable takeaway";
+      ? `Thread arc:
+- Tweet 1: HOOK - ${hookPattern.toLowerCase()}. Make them want to read on.
+- Tweet 2: PAYOFF - the insight, lesson, or hot take. End strong.`
+      : `Thread arc:
+- Tweet 1: HOOK - ${hookPattern.toLowerCase()}. Create curiosity.
+- Tweet 2: CONTEXT - the interesting detail, tradeoff, or nuance
+- Tweet 3: PAYOFF - your take, the lesson, or what to do next`;
 
   return `
-Write a short tweet thread of ${count} tweets.
+Write a short tweet thread of ${count} tweets that sounds like a real person sharing something interesting.
 
-Voice: senior engineer with social media personality; crisp, confident, slightly punchy.
-Style: minimal, pragmatic, memorable.
-Goal: hook -> context -> actionable takeaway across the thread.
-Open with a decisive claim or contrast. No section labels.
-Be specific: include one concrete detail and 1-2 key terms from the title/summary.
-Avoid vague phrasing and hedging.
+Voice: ${voice}. Never corporate or robotic.
+Tone: Casual, conversational, like you're explaining to a friend over coffee.
+
+CRITICAL - Make it human:
+- Use contractions naturally (it's, don't, I've, we're)
+- First-person encouraged ("I", "my", "we")
+- Each tweet should flow into the next like natural conversation
+- Include your genuine reaction or opinion
+- Be specific with at least one concrete detail
+- Sentence fragments and informal transitions are good ("But here's the thing...", "So basically...")
+
+${arc}
 
 Constraints:
 - Output exactly ${count} lines, one tweet per line
 - Prefix each line with "1/${count} ", "2/${count} ", etc.
 - Under ${MAX_TEXT_LENGTH} characters per line
-- No emojis, hashtags, questions, or links in the text
+- No emojis, hashtags, or links in the text
+- Rhetorical questions okay if punchy
 
-${arc}
+Avoid:
+- Corporate speak, buzzwords, or marketing language
+- Starting any tweet with "New:", "Announcing:", or "Check out"
+- Sounding like a press release
+- Generic phrases like "game changer" or "next level"
+
 Do not mention the source or repeat the title verbatim. No labels like "Observation:" or "Tradeoff:".${extra}${guard}${repoGuard}
 A source link will be appended to the first tweet.
 
@@ -1197,7 +1333,9 @@ function validateTweetText(tweet, signal, { requireKeyword = true } = {}) {
     return `Keep it under ${MAX_TEXT_LENGTH} characters.`;
   }
   if (/#/.test(tweet)) return "Remove hashtags.";
-  if (/\?/.test(tweet)) return "Remove questions.";
+  // Allow up to one question mark for rhetorical questions
+  const questionCount = (tweet.match(/\?/g) || []).length;
+  if (questionCount > 1) return "Use at most one question.";
   if (/https?:\/\//i.test(tweet)) return "Remove links from the text.";
   if (/[\u{1F300}-\u{1FAFF}]/u.test(tweet)) return "Remove emojis.";
   if (SECTION_LABEL_REGEX.test(tweet)) {

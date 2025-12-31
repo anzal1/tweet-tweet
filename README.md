@@ -55,6 +55,17 @@ Tune content:
 - Adjust `CATEGORY_WEIGHTS` to change trending vs evergreen mix.
 - Edit the prompt in `buildPrompt` for tone/style tweaks.
 
+## Humanization Features
+The bot uses several techniques to make tweets sound more human and engaging:
+
+- **Voice Variants**: Randomly rotates between 8 different personas (curious builder, pragmatic tech lead, opinionated dev, etc.)
+- **Hook Patterns**: Uses 10 different opening strategies (contrarian statements, personal anecdotes, surprising facts, etc.)
+- **Engagement Closers**: Occasionally adds punchy endings ("Worth a look.", "Saved me hours.", etc.)
+- **Time-Aware Context**: Sometimes adds day-appropriate intros ("Monday momentum:", "Weekend reading:")
+- **First-Person Perspective**: Encourages "I", "we", "my experience" for authenticity
+- **Banned Phrases**: Filters out 30+ corporate/AI-sounding phrases ("game changer", "leverage", "synergy", etc.)
+- **Rhetorical Questions**: Allows one question per tweet for engagement
+
 ## Suggested cadence
 - 3 to 5 posts per week is a good starting point.
 - The current schedule posts weekdays once per day.
